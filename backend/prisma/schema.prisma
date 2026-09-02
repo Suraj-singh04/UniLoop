@@ -4,10 +4,222 @@
 // Get a free hosted Postgres database in seconds: `npx create-db`
 
 generator client {
-  provider = "prisma-client"
-  output   = "../app/generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  STUDENT
+  FACULTY
+  ADMIN
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum ItemStatus {
+  AVAILABLE
+  BOOKED
+  UNAVAILABLE
+}
+
+enum BookingStatus {
+  REQUESTED
+  ACCEPTED
+  REJECTED
+  PICKED_UP
+  RETURNED
+  COMPLETED
+  DISPUTED
+  CANCELLED
+}
+
+enum EscrowStatus {
+  NONE
+  HELD
+  CAPTURED
+  RELEASED
+  FORFEITED
+}
+
+enum HandoffType {
+  PICKUP
+  RETURN
+}
+
+enum RequestStatus {
+  OPEN
+  WAVE_1
+  WAVE_2
+  WAVE_3
+  MATCHED
+  EXPIRED
+  CANCELLED
+}
+
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED
+}
+
+model Zone {
+  id      String   @id @default(cuid())
+  name    String   @unique // e.g. "CSE Block", "Hostel A", "Law Block"
+  users   User[]
+  items   Item[]
+  requests Request[]
+}
+
+model User {
+  id                 String              @id @default(cuid())
+  name               String
+  email              String              @unique
+  phone              String?             @unique
+  role               UserRole            @default(STUDENT)
+  department         String?
+  zoneId             String?
+  zone               Zone?               @relation(fields: [zoneId], references: [id])
+  verificationStatus VerificationStatus  @default(PENDING)
+  profilePhotoUrl    String?
+
+  // Dual-role stats
+  itemsListed         Int      @default(0)
+  avgConditionRating  Float?   // as a lender
+  handoffReliability  Float?   // % of on-time handoffs as lender
+  itemsBorrowed       Int      @default(0)
+  onTimeReturnRate    Float?   // as a borrower
+  disputeCount        Int      @default(0)
+
+  // Availability for on-demand requests
+  isAvailableToLend   Boolean  @default(false)
+  availabilitySetAt   DateTime?
+
+  items               Item[]
+  bookingsAsBorrower  Booking[] @relation("BorrowerBookings")
+  requestsPosted      Request[]
+  ratingsGiven        Rating[]  @relation("RatingsGiven")
+  ratingsReceived     Rating[]  @relation("RatingsReceived")
+  disputesRaised      Dispute[]
+
+  createdAt DateTime @default(now())
+}
+
+model Item {
+  id             String     @id @default(cuid())
+  ownerId        String
+  owner          User       @relation(fields: [ownerId], references: [id])
+  title          String
+  category       String
+  description    String
+  photos         String[]   // storage URLs
+  pricePerDay    Decimal
+  depositAmount  Decimal
+  zoneId         String
+  zone           Zone       @relation(fields: [zoneId], references: [id])
+  pickupLocation String     // fixed on-campus point
+  status         ItemStatus @default(AVAILABLE)
+
+  bookings       Booking[]
+  createdAt      DateTime   @default(now())
+}
+
+model Booking {
+  id            String        @id @default(cuid())
+  itemId        String
+  item          Item          @relation(fields: [itemId], references: [id])
+  borrowerId    String
+  borrower      User          @relation("BorrowerBookings", fields: [borrowerId], references: [id])
+  startDate     DateTime
+  endDate       DateTime
+  status        BookingStatus @default(REQUESTED)
+  escrowStatus  EscrowStatus  @default(NONE)
+
+  handoffs      HandoffRecord[]
+  transaction   Transaction?
+  ratings       Rating[]
+  dispute       Dispute?
+
+  createdAt     DateTime      @default(now())
+}
+
+model HandoffRecord {
+  id                 String      @id @default(cuid())
+  bookingId          String
+  booking            Booking     @relation(fields: [bookingId], references: [id])
+  type               HandoffType
+  photos             String[]
+  confirmedByLender  Boolean     @default(false)
+  confirmedByBorrower Boolean    @default(false)
+  timestamp          DateTime    @default(now())
+}
+
+model Transaction {
+  id              String   @id @default(cuid())
+  bookingId       String   @unique
+  booking         Booking  @relation(fields: [bookingId], references: [id])
+  amount          Decimal
+  depositAmount   Decimal
+  platformFee     Decimal
+  paymentStatus   String   // tie to Razorpay status enum/string
+  createdAt       DateTime @default(now())
+}
+
+model Rating {
+  id        String   @id @default(cuid())
+  bookingId String
+  booking   Booking  @relation(fields: [bookingId], references: [id])
+  raterId   String
+  rater     User     @relation("RatingsGiven", fields: [raterId], references: [id])
+  ratedId   String
+  rated     User     @relation("RatingsReceived", fields: [ratedId], references: [id])
+  stars     Int
+  onTime    Boolean
+  comment   String?
+  createdAt DateTime @default(now())
+}
+
+model Dispute {
+  id         String        @id @default(cuid())
+  bookingId  String        @unique
+  booking    Booking       @relation(fields: [bookingId], references: [id])
+  raisedById String
+  raisedBy   User          @relation(fields: [raisedById], references: [id])
+  reason     String
+  evidence   String[]
+  status     DisputeStatus @default(OPEN)
+  resolution String?
+  createdAt  DateTime      @default(now())
+}
+
+model Request {
+  id          String        @id @default(cuid())
+  postedById  String
+  postedBy    User          @relation(fields: [postedById], references: [id])
+  title       String
+  description String
+  zoneId      String
+  zone        Zone          @relation(fields: [zoneId], references: [id])
+  status      RequestStatus @default(OPEN)
+  currentWave Int           @default(1)
+  waveStartedAt DateTime    @default(now())
+  createdAt   DateTime      @default(now())
+}
+
+model OtpCode {
+  id          String        @id @default(cuid())
+  email       String
+  code      String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([email])
 }
